@@ -4,6 +4,7 @@ pragma solidity ^0.8.9;
 import "./openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./openzeppelin/contracts-upgradeable/token/ERC721/extensions/ERC721EnumerableUpgradeable.sol";
 import "./Sugar.sol";
+import "./SugarDao.sol";
 
 contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
 
@@ -11,6 +12,8 @@ contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
      * @dev address of SGR token
      */
     Sugar public sugar;
+
+    SugarDao public sugarDao;
 
     /**
      * @dev the amount of SGR that will be mint to burner of sugarBlock
@@ -32,29 +35,38 @@ contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
 
     uint256 public totalSugarBlocksMined;
 
-    function initialize(address _sugar) public initializer {
+    modifier onlySugarDao {
+        require(msg.sender == address(sugarDao), "msg.sender is not sugarDao");
+        _;
+    }
+
+    function initialize(address _sugar, address _sugarDao) public initializer {
         __ERC721_init("SugarBlocks", "SB");
         __ERC721Enumerable_init_unchained();
-        require(_sugar != address(0),"SugarBlock: invalid sugar address");
+        require(_sugar != address(0), "SugarBlock: invalid sugar address");
+        require(_sugarDao != address(0), "SugarBlock: invalid sugarDao address");
         sugar = Sugar(_sugar);
+        sugarDao = SugarDao(_sugarDao);
         sugarInSugarBlock = 100_000_000; // 100 SGR 
         targetValue = type(uint256).max;
         entropyNonce = 0;
-        uint256 _maxEthCost = 10 ether;
-        uint256 _minEthCost = 10 gwei;
-        setBoundsToEthCost(_minEthCost, _maxEthCost);
-        uint256 _maxTargetValue = type(uint256).max / 2;
-        uint256 _minTargetValue = 2 ** 50;
-        setBoundsToTargetValue(_minTargetValue, _maxTargetValue);
+        maxEthCost = 10 ether;
+        minEthCost = 10 gwei;
+        maxTargetValue = type(uint256).max / 2;
+        minTargetValue = 2 ** 50;
     }
 
-    function setBoundsToEthCost(uint256 _minEthCost, uint256 _maxEthCost) public {
+    function setBoundsToEthCost(uint256 _minEthCost, uint256 _maxEthCost) public onlySugarDao {
+        require(_minEthCost >= 1 gwei, "SugarBlock: too low _minEthCost");
+        require(_maxEthCost <= 100 ether, "SugarBlock: too hight _maxEthCost");
         require(_minEthCost < _maxEthCost, "SugarBlock: invalid bounds of EthCost");
         minEthCost = _minEthCost;
         maxEthCost = _maxEthCost;
     }
 
-    function setBoundsToTargetValue(uint256 _minTargetValue, uint256 _maxTargetValue) public {
+    function setBoundsToTargetValue(uint256 _minTargetValue, uint256 _maxTargetValue) public onlySugarDao {
+        require(_minTargetValue >= 2 ** 50, "SugarBlock: too low _minTargetValue");
+        require(_maxTargetValue <= type(uint256).max / 2, "SugarBlock: too hight _maxTargetValue");
         require(_minTargetValue < _maxTargetValue, "SugarBlock: Invalid bounds of targetValue");
         minTargetValue = _minTargetValue;
         maxTargetValue = _maxTargetValue;
@@ -67,11 +79,11 @@ contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
     function hardMine(uint256 sweetNonce) public {
         uint256 output = uint256(keccak256(abi.encode(sweetNonce ^ uint256(uint160(msg.sender)) ^ entropyNonce))); // Target function SHA3(nonce XOR address of sender of transaction)
         require(output <= targetValue, "SugarBlock: failed to mine: output of target function not less than targetValue");
-        if (uint256(minTargetValue) < (targetValue / 2)) {
+        if (minTargetValue < (targetValue / 2)) {
             targetValue /= 2;
         }
         entropyNonce++;
-        mint(msg.sender);
+        mintInternal(msg.sender);
     }
 
     /**
@@ -86,27 +98,37 @@ contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
             }("");
             require(sent,"Failed to send to msg.sender the rest");
         }
-        mint(msg.sender);
+        mintInternal(msg.sender);
     }
 
     /**
      * @dev destroy the sugar block and mints sugar ERC20 token to burner.
+     * @dev return the amount of minted sugar ERC20 token
      * @param sugarBlockId id of sugar block. Callet should be the owner if `sugarBlockId`
      */
-    function burn(uint256 sugarBlockId) public {
+    function burn(uint256 sugarBlockId) public returns (uint256) {
         require(msg.sender == ownerOf(sugarBlockId), "SugarBlock: msg.sender is not owner of this sugarBlockId");
         _burn(sugarBlockId);
         sugar.mint(msg.sender, sugarInSugarBlock);
-    }
-
-    function mint(address to) internal {
-        uint256 sugarBlockId = totalSugarBlocksMined;
-        _mint(to, sugarBlockId);
-        totalSugarBlocksMined++;
+        return sugarInSugarBlock;
     }
 
     /**
-     * @dev returns the owner of 
+     * @dev mints sugar block to `to`
+     */
+    function mintInternal(address to) internal returns (uint256) {
+        uint256 sugarBlockId = totalSugarBlocksMined;
+        _mint(to, sugarBlockId);
+        totalSugarBlocksMined++;
+        return sugarBlockId;
+    }
+
+    function mint(address to) public onlySugarDao returns (uint256) {
+        return mintInternal(to);
+    }
+
+    /**
+     * @dev returns the owner of `sugarBlockId` 
      */
     function ownerOf(uint256 sugarBlockId) public view override(ERC721Upgradeable,IERC721Upgradeable) returns (address) {
         return ERC721Upgradeable.ownerOf(sugarBlockId);
