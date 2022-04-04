@@ -6,6 +6,7 @@ import "./openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "./openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
 import "./Sugar.sol";
 import "./SugarBlock.sol";
+import "./SugarPool.sol";
 
 
 contract SugarDao is Initializable {
@@ -14,6 +15,7 @@ contract SugarDao is Initializable {
 
     Sugar public sugar;
     SugarBlock public sugarBlock;
+    SugarPool public sugarPool;
 
     ProposalInfo[] public proposalInfo;
 
@@ -40,6 +42,7 @@ contract SugarDao is Initializable {
 
     struct VotePosition {
         uint256 sugarStaked;
+        uint256 sugarAvailable;
     }
 
     modifier onlyAfterVotingPeriod(uint256 proposalId, uint256 extraTime) {
@@ -61,7 +64,16 @@ contract SugarDao is Initializable {
     ) public returns (uint256) {
         uint256 proposalId = proposalInfo.length;
         uint256 proposalStart = block.timestamp;
-        proposalInfo.push(ProposalInfo(ProposalState.VOTING, proposalId, functionToCall, params, proposalStart, 0));
+        proposalInfo.push(
+            ProposalInfo(
+                ProposalState.VOTING,
+                proposalId, 
+                functionToCall, 
+                params, 
+                proposalStart, 
+                0
+            )
+        );
         return proposalId;
     }
 
@@ -78,26 +90,32 @@ contract SugarDao is Initializable {
     function execute(uint256 proposalId) public onlyAfterVotingPeriod(proposalId, 0) {
         ProposalInfo storage _proposalInfo = proposalInfo[proposalId];
         require(_proposalInfo.state == ProposalState.VOTING, "SugarDao: proposal is executed");
-        if (totalSugarStaked[proposalId] > quorum()){
-            _proposalInfo.state = ProposalState.EXECUTED;
-            uint256 sugarBlockId = sugarBlock.mint(address(this));
-            uint256 sugarMinted = sugarBlock.burn(sugarBlockId);
-            uint256 sugarSendToExecutor = sugarMinted / 2;
-            sugar.safeTransfer(msg.sender, sugarSendToExecutor);
+        uint256 sugarBlockId = sugarBlock.mint(address(this));      // receive sugarBlock NFT
+        uint256 sugarMinted = sugarBlock.burn(sugarBlockId);        // burn sugarBlock NFT and receive sugar
+
+        uint256 sugarSendToExecutor = sugarMinted / 2;              // executor will earn 1/2 of minted sugar
+        sugar.safeTransfer(msg.sender, sugarSendToExecutor);        // transfer half of minted sugar to executor
+        uint256 restSugar = sugarMinted - sugarSendToExecutor;      // rest sugar equal 1/2 of minted sugar
+
+        if (totalSugarStaked[proposalId] >= quorum()) {             // if quorum is reached
+            sugarPool.sendHalfEther(msg.sender);                    // transfer half of ether from sugar pool to executor
+            _proposalInfo.state = ProposalState.EXECUTED;           // change state of proposal to executed
+            _proposalInfo.reward = restSugar;                       // rest 1/2 of minted sugar will be distributed to voters
             
-            _proposalInfo.reward = sugarMinted - sugarSendToExecutor;
             // execute proposal
         } else {
-            _proposalInfo.state = ProposalState.NOT_EXECUTED;
-            // send ticket NFT for execution. This ticket NFT can be converted to sugar by some exchange rate
+            _proposalInfo.state = ProposalState.NOT_EXECUTED;       // if quorum is not reached
+            uint256 sugarSendToPool = restSugar / 2;                // send 1/2 of rest sugar to sugar pool
+            sugar.safeTransfer(address(sugarPool), sugarSendToPool);// transfer 1/2 of rest sugar to sugar pool
+            _proposalInfo.reward = restSugar - sugarSendToPool;     // 1/2 of rest sugar will be distributed to voters
         }
-    }
 
+    }
 
     function claimSugar(uint256 proposalId) public onlyAfterVotingPeriod(proposalId, 0) {
         ProposalInfo storage _proposalInfo = proposalInfo[proposalId];
         VotePosition storage _votePosition = votePosition[proposalId][msg.sender];
-        require(_proposalInfo.state == ProposalState.EXECUTED || _proposalInfo.state == ProposalState.NOT_EXECUTED, "SugarDao: call execute");
+        require(_proposalInfo.state == ProposalState.EXECUTED || _proposalInfo.state == ProposalState.NOT_EXECUTED, "SugarDao: call execute(proposalId)");
         if (_proposalInfo.state == ProposalState.EXECUTED) {   
             uint256 sugarReward = _proposalInfo.reward * _votePosition.sugarStaked / totalSugarStaked[proposalId];
             uint256 sugarAmountToSend = _votePosition.sugarStaked + sugarReward;
@@ -118,14 +136,12 @@ contract SugarDao is Initializable {
     }
 
     /**
-     * @dev minimal amount of token to execute 
+     * @dev minimal amount of sugar token to execute 
      */
     function quorum() public view returns (uint256) {
         uint256 totalSupply = sugar.totalSupply();
         return totalSupply / 2;
     }
-
-   
 
     function proposalLength() public view returns (uint256) {
         return proposalInfo.length;
