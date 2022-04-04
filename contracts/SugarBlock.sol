@@ -5,15 +5,34 @@ import "./openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./openzeppelin/contracts-upgradeable/token/ERC721/extensions/ERC721EnumerableUpgradeable.sol";
 import "./Sugar.sol";
 import "./SugarDao.sol";
+import "./SugarPool.sol";
 
 contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
 
+    uint256 public constant MINIMAL_ETH_COST = 1 ether;
+
+    uint256 public constant MAXIMAL_ETH_COST = 1_000_000 ether;
+
+    uint256 public constant MINIMAL_ETH_COST_DIFFERENCE = 1000 ether;
+
+    uint256 public constant MINIMAL_TARGET_VALUE = 2 ** 50;
+
+    uint256 public constant MAXIMAL_TARGET_VALUE = type(uint256).max / 2;
+    
     /**
      * @dev address of SGR token
      */
     Sugar public sugar;
 
+    /**
+     * @dev address of sugarDao
+     */
     SugarDao public sugarDao;
+
+    /**
+     * @dev address of sugar pool
+     */
+    SugarPool public sugarPool;
 
     /**
      * @dev the amount of SGR that will be mint to burner of sugarBlock
@@ -50,34 +69,41 @@ contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
         sugarInSugarBlock = 100_000_000; // 100 SGR 
         targetValue = type(uint256).max;
         entropyNonce = 0;
-        maxEthCost = 10 ether;
-        minEthCost = 10 gwei;
+        maxEthCost = 1000 ether;
+        minEthCost = 1 ether;
         maxTargetValue = type(uint256).max / 2;
         minTargetValue = 2 ** 50;
     }
 
     function setBoundsToEthCost(uint256 _minEthCost, uint256 _maxEthCost) public onlySugarDao {
-        require(_minEthCost >= 1 gwei, "SugarBlock: too low _minEthCost");
-        require(_maxEthCost <= 100 ether, "SugarBlock: too hight _maxEthCost");
+        require(_minEthCost >= MINIMAL_ETH_COST, "SugarBlock: too low _minEthCost");
+        require(_maxEthCost <= MAXIMAL_ETH_COST, "SugarBlock: too hight _maxEthCost");
         require(_minEthCost < _maxEthCost, "SugarBlock: invalid bounds of EthCost");
+        require(_maxEthCost - _minEthCost >= MINIMAL_ETH_COST_DIFFERENCE, "SugarBlock: difference between max and min should be 1000");
         minEthCost = _minEthCost;
         maxEthCost = _maxEthCost;
     }
 
     function setBoundsToTargetValue(uint256 _minTargetValue, uint256 _maxTargetValue) public onlySugarDao {
-        require(_minTargetValue >= 2 ** 50, "SugarBlock: too low _minTargetValue");
-        require(_maxTargetValue <= type(uint256).max / 2, "SugarBlock: too hight _maxTargetValue");
+        require(_minTargetValue >= MINIMAL_TARGET_VALUE, "SugarBlock: too low _minTargetValue");
+        require(_maxTargetValue <= MAXIMAL_TARGET_VALUE, "SugarBlock: too hight _maxTargetValue");
         require(_minTargetValue < _maxTargetValue, "SugarBlock: Invalid bounds of targetValue");
         minTargetValue = _minTargetValue;
         maxTargetValue = _maxTargetValue;
     }
 
+    function increaseTargetValue() public onlySugarDao {
+        if(targetValue < type(uint256).max / 2){
+            targetValue *= 2;
+        }
+    }
+
     /**
      * @dev mine sugar block with mining effort.
-     * @param sweetNonce - number, that shoud fit to inequality SHA3(sweetNonce XOR msg.sender XOR entropyNonce) < targetValue
+     * @param sweetNonce - number, that shoud fit to inequality SHA3(concat(sweetNonce, msg.sender, entropyNonce)) < targetValue
      */
     function hardMine(uint256 sweetNonce) public {
-        uint256 output = uint256(keccak256(abi.encode(sweetNonce ^ uint256(uint160(msg.sender)) ^ entropyNonce))); // Target function SHA3(nonce XOR address of sender of transaction)
+        uint256 output = uint256(keccak256(abi.encode(sweetNonce, uint256(uint160(msg.sender)), entropyNonce))); // Target function SHA3(nonce XOR address of sender of transaction)
         require(output <= targetValue, "SugarBlock: failed to mine: output of target function not less than targetValue");
         if (minTargetValue < (targetValue / 2)) {
             targetValue /= 2;
@@ -93,11 +119,15 @@ contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
         uint256 cost = costOfTargetValue();
         require(msg.value >= cost, "SugarBlock: too low native token amount to buy");
         if(msg.value > cost) {
-            (bool sent, ) = payable(msg.sender).call{
+            (bool sentRest, ) = payable(msg.sender).call{
                 value: msg.value - cost
             }("");
-            require(sent,"Failed to send to msg.sender the rest");
+            require(sentRest,"Failed to send to msg.sender the rest");
         }
+        (bool sentToPool, ) = payable(sugarPool).call{
+            value: cost
+        }("");
+        require(sentToPool, "Failed to send to sugarPool costOfTarget");
         mintInternal(msg.sender);
     }
 
