@@ -134,7 +134,17 @@ contract SugarDao is Initializable {
         ProposalInfo storage _proposalInfo = proposalInfo[proposalId];
         require(_proposalInfo.state == ProposalState.VOTING, "SugarDao: proposal is executed or not executed");
         _proposalInfo.state = ProposalState.REVERTED;
-        // send ticket NFT for execution. This ticket NFT can be converted to sugar by some exchange rate
+        
+        uint256 sugarBlockId = sugarBlock.mint(address(this));      // receive sugarBlock NFT
+        uint256 sugarMinted = sugarBlock.burn(sugarBlockId);        // burn sugarBlock NFT and receive sugar
+
+        uint256 sugarSendToExecutor = sugarMinted / 2;              // executor will earn 1/2 of minted sugar
+        sugar.safeTransfer(msg.sender, sugarSendToExecutor);        // transfer half of minted sugar to executor
+        uint256 restSugar = sugarMinted - sugarSendToExecutor;      // rest sugar equal 1/2 of minted sugar
+
+        uint256 sugarSendToPool = restSugar / 2;                // send 1/2 of rest sugar to sugar pool
+        sugar.safeTransfer(address(sugarPool), sugarSendToPool);// transfer 1/2 of rest sugar to sugar pool
+        _proposalInfo.reward = restSugar - sugarSendToPool;     // 1/2 of rest sugar will be distributed to voters
     }
 
     /**
