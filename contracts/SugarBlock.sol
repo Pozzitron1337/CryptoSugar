@@ -7,6 +7,9 @@ import "./Sugar.sol";
 import "./SugarDao.sol";
 import "./SugarPool.sol";
 
+/**
+ * @notice SugarBlock is NFT that can be minted by mining using proof-of-work or purchasing, depending on current cost of target value
+ */
 contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
 
     uint256 public constant MINIMAL_ETH_COST = 1 ether;
@@ -37,7 +40,7 @@ contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
     /**
      * @dev the amount of SGR that will be mint to burner of sugarBlock
      */
-    uint256 sugarInSugarBlock;
+    uint256 public sugarInSugarBlock;
 
     /** Mining variables */
 
@@ -108,7 +111,9 @@ contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
         if (minTargetValue < (targetValue / 2)) {
             targetValue /= 2;
         }
-        entropyNonce++;
+        unchecked {
+            entropyNonce++;
+        }
         mintInternal(msg.sender);
     }
 
@@ -131,6 +136,10 @@ contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
         mintInternal(msg.sender);
     }
 
+    function mint(address to) public onlySugarDao returns (uint256) {
+        return mintInternal(to);
+    }
+
     /**
      * @dev destroy the sugar block and mints sugar ERC20 token to burner.
      * @dev return the amount of minted sugar ERC20 token
@@ -151,10 +160,6 @@ contract SugarBlock is Initializable, ERC721EnumerableUpgradeable {
         _mint(to, sugarBlockId);
         totalSugarBlocksMined++;
         return sugarBlockId;
-    }
-
-    function mint(address to) public onlySugarDao returns (uint256) {
-        return mintInternal(to);
     }
 
     /**

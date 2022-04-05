@@ -8,7 +8,9 @@ import "./Sugar.sol";
 import "./SugarBlock.sol";
 import "./SugarPool.sol";
 
-
+/**
+ * @notice SugarDao is decentralized governance for controlling parameter of cost of target value and incentivizing usage of sugar ERC20 token
+ */
 contract SugarDao is Initializable {
 
     using SafeERC20Upgradeable for Sugar;
@@ -87,7 +89,7 @@ contract SugarDao is Initializable {
         totalSugarStaked[proposalId] += sugarAmount;
     }
 
-    function execute(uint256 proposalId) public onlyAfterVotingPeriod(proposalId, 0) {
+    function execute(uint256 proposalId) public payable onlyAfterVotingPeriod(proposalId, 0) {
         ProposalInfo storage _proposalInfo = proposalInfo[proposalId];
         require(_proposalInfo.state == ProposalState.VOTING, "SugarDao: proposal is executed");
         uint256 sugarBlockId = sugarBlock.mint(address(this));      // receive sugarBlock NFT
@@ -98,7 +100,7 @@ contract SugarDao is Initializable {
         uint256 restSugar = sugarMinted - sugarSendToExecutor;      // rest sugar equal 1/2 of minted sugar
 
         if (totalSugarStaked[proposalId] >= quorum()) {             // if quorum is reached
-            sugarPool.sendHalfEther(msg.sender);                    // transfer half of ether from sugar pool to executor
+            sugarPool.sendHalfEtherBalance(msg.sender);             // transfer half of ether from sugar pool to executor
             _proposalInfo.state = ProposalState.EXECUTED;           // change state of proposal to executed
             _proposalInfo.reward = restSugar;                       // rest 1/2 of minted sugar will be distributed to voters
             

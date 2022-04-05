@@ -9,6 +9,9 @@ import "./Sugar.sol";
 import "./SugarBlock.sol";
 import "./SugarDao.sol";
 
+/**
+ * @notice SugarPool is liquidity pool of sugar ERC20 token and ether. Sugar can be purchased here.
+ */
 contract SugarPool is Initializable {
 
     using SafeERC20Upgradeable for Sugar;
@@ -34,8 +37,11 @@ contract SugarPool is Initializable {
         sugar.safeTransfer(msg.sender, sugarOut);
     }
 
-    function sendHalfEtherBalance(address to) public onlySugarDao {
-        
+    function sendHalfEtherBalance(address to) public payable onlySugarDao {
+         (bool sendHalfEther, ) = payable(msg.sender).call{
+                value: getEtherBalance() / 2
+        }("");
+        require(sendHalfEther,"Failed to send to msg.sender the rest");
     }
 
     function sugarPriceInEther() public view returns (uint256) {
