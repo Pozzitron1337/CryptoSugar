@@ -49,7 +49,7 @@ contract SugarDao is Initializable {
 
     modifier onlyAfterVotingPeriod(uint256 proposalId, uint256 extraTime) {
         uint256 currentTime = block.timestamp;
-        require(currentTime > proposalInfo[proposalId].proposalStart + votingPeriod + extraTime, "SugarDao: too early to start execution");
+        require(currentTime > proposalInfo[proposalId].proposalStart + votingPeriod + extraTime, "SugarDao: after voting period not started");
         _;
     }
     
@@ -86,6 +86,7 @@ contract SugarDao is Initializable {
         VotePosition storage _votePosition = votePosition[proposalId][msg.sender];
         sugar.safeTransferFrom(msg.sender, address(this), sugarAmount);
         _votePosition.sugarStaked += sugarAmount;
+        _votePosition.sugarAvailable += sugarAmount;
         totalSugarStaked[proposalId] += sugarAmount;
     }
 
@@ -117,17 +118,14 @@ contract SugarDao is Initializable {
     function claimSugar(uint256 proposalId) public onlyAfterVotingPeriod(proposalId, 0) {
         ProposalInfo storage _proposalInfo = proposalInfo[proposalId];
         VotePosition storage _votePosition = votePosition[proposalId][msg.sender];
-        require(_proposalInfo.state == ProposalState.EXECUTED || _proposalInfo.state == ProposalState.NOT_EXECUTED, "SugarDao: call execute(proposalId)");
-        if (_proposalInfo.state == ProposalState.EXECUTED) {   
-            uint256 sugarReward = _proposalInfo.reward * _votePosition.sugarStaked / totalSugarStaked[proposalId];
-            uint256 sugarAmountToSend = _votePosition.sugarStaked + sugarReward;
-            sugar.safeTransfer(msg.sender, sugarAmountToSend);
-            _votePosition.sugarStaked = 0;
-        } else {
-            uint256 sugarAmountToSend = _votePosition.sugarStaked;
-            sugar.safeTransfer(msg.sender, sugarAmountToSend);
-            _votePosition.sugarStaked = 0;
-        }
+        require(
+            _proposalInfo.state != ProposalState.VOTING,
+            "SugarDao: call execute(proposalId) or revertProposal(proposalId)"
+        );
+        uint256 sugarReward = _proposalInfo.reward * _votePosition.sugarAvailable / totalSugarStaked[proposalId];
+        uint256 sugarAmountToSend = _votePosition.sugarAvailable + sugarReward;
+        sugar.safeTransfer(msg.sender, sugarAmountToSend);
+        _votePosition.sugarAvailable = 0;
     }
 
     function revertProposal(uint256 proposalId) public onlyAfterVotingPeriod(proposalId, 1 hours){
